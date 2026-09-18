@@ -6,12 +6,17 @@ from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity
 from flask_jwt_extended import jwt_required
 from psycopg2.extras import RealDictCursor
 from werkzeug.security import generate_password_hash, check_password_hash
-
+from sentence_transformers import SentenceTransformer
 from database import testar_conexao, criar_conexao
+
 
 app = Flask(__name__)
 app.config["JWT_SECRET_KEY"] = "chave-super-secreta"
 jwt = JWTManager(app)
+
+modelo_embedding = SentenceTransformer(
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+)
 
 
 @app.get("/")
@@ -205,9 +210,11 @@ def carregar_documentos(caminho):
     for arquivo in arquivos:
         caminho_arquivo = os.path.join(caminho, arquivo)
         conteudo = ler_documento(caminho_arquivo)
+        chunks = dividir_em_chunks(conteudo)
+
         documento = {
             "nome": arquivo,
-            "chunks": dividir_em_chunks(conteudo)
+            "chunks": chunks
         }
 
         resultado.append(documento)
