@@ -1,0 +1,9 @@
+Flask é um microframework web desenvolvido em Python.
+
+Ele permite criar aplicações web e APIs utilizando Python.
+
+Uma aplicação Flask normalmente começa com a criação de uma instância da classe Flask.
+
+O Flask possui um sistema de rotas que permite associar URLs a funções Python.
+
+Ele também pode ser utilizado para construir APIs REST.

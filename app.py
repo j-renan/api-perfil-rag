@@ -1,3 +1,6 @@
+import os
+import textwrap
+
 from flask import Flask, request
 from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity
 from flask_jwt_extended import jwt_required
@@ -147,7 +150,98 @@ def api():
     }
 
 
+DIRETORIO_DOCUMENTOS = "documentos"
+
+@app.get("/documento")
+@jwt_required()
+def documento():
+    texto = ler_documento(
+        os.path.join(DIRETORIO_DOCUMENTOS, "flask.txt")
+    )
+
+    return {
+        "documento": texto
+    }
+
+
+@app.get("/documentos")
+@jwt_required()
+def buscar_documentos():
+    documentos = listar_documentos(DIRETORIO_DOCUMENTOS)
+
+    return {
+        "documentos": documentos
+    }
+
+
+@app.get("/documentos/completos")
+@jwt_required()
+def buscar_documentos_completos():
+    documentos = carregar_documentos(DIRETORIO_DOCUMENTOS)
+
+    return documentos
+
+
+def ler_documento(caminho):
+    with open(caminho, "r", encoding="utf-8") as arquivo:
+        return arquivo.read()
+
+
+def listar_documentos(caminho):
+    arquivos = os.listdir(caminho)
+    documentos = []
+
+    for arquivo in arquivos:
+        if arquivo.endswith(".txt"):
+            documentos.append(arquivo)
+
+    return documentos
+
+
+def carregar_documentos(caminho):
+    arquivos = listar_documentos(caminho)
+    resultado = []
+
+    for arquivo in arquivos:
+        caminho_arquivo = os.path.join(caminho, arquivo)
+        conteudo = ler_documento(caminho_arquivo)
+        documento = {
+            "nome": arquivo,
+            "chunks": dividir_em_chunks(conteudo)
+        }
+
+        resultado.append(documento)
+
+    return resultado
+
+
+def dividir_em_chunks(texto, tamanho=50, overlap=10):
+    if tamanho <= 0:
+        raise ValueError("O tamanho deve ser maior que zero.")
+
+    if overlap < 0:
+        raise ValueError("O overlap não pode ser negativo.")
+
+    if overlap >= tamanho:
+        raise ValueError(
+            "O overlap deve ser menor que o tamanho do chunk."
+        )
+
+    passo = tamanho - overlap
+
+    chunks = []
+    for idx, chk in enumerate(range(0, len(texto), passo)):
+        chunk = texto[chk:chk + tamanho]
+        obj = {
+            "chunk_id": idx + 1,
+            "texto": chunk
+        }
+        chunks.append(obj)
+    return chunks
+
 
 
 if __name__ == "__main__":
     app.run(debug=True)
+
+
