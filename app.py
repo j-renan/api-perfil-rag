@@ -1,13 +1,12 @@
 import os
-import textwrap
 
 from flask import Flask, request
 from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity
 from flask_jwt_extended import jwt_required
 from psycopg2.extras import RealDictCursor
 from werkzeug.security import generate_password_hash, check_password_hash
-from sentence_transformers import SentenceTransformer
 from database import testar_conexao, criar_conexao
+from sentence_transformers import SentenceTransformer
 
 
 app = Flask(__name__)
@@ -98,7 +97,7 @@ def listar_usuarios():
 
 
 @app.post("/usuarios")
-@jwt_required()
+# @jwt_required()
 def criar_usuario():
     dados = request.get_json()
     nome = dados["nome"]
@@ -183,8 +182,45 @@ def buscar_documentos():
 @jwt_required()
 def buscar_documentos_completos():
     documentos = carregar_documentos(DIRETORIO_DOCUMENTOS)
-
     return documentos
+
+
+@app.post("/processar-documento")
+@jwt_required()
+def processar_documento_rota():
+    nome = "flask.txt"
+    caminho = os.path.join(
+        DIRETORIO_DOCUMENTOS,
+        nome
+    )
+
+    texto = ler_documento(caminho)
+    chunks = dividir_em_chunks(texto)
+    documento_id = processar_documento(
+        nome,
+        chunks
+    )
+    return {
+        "mensagem": "Documento processado com sucesso!",
+        "documento_id": documento_id,
+        "quantidade_chunks": len(chunks)
+    }
+
+
+@app.get("/buscar")
+@jwt_required()
+def buscar():
+    pergunta = request.args.get("pergunta")
+    if not pergunta:
+        return {
+            "erro": "Informe uma pergunta."
+        }, 400
+
+    resultados = buscar_chunks_semelhantes(pergunta)
+    return {
+        "pergunta": pergunta,
+        "resultados": resultados
+    }
 
 
 def ler_documento(caminho):
@@ -245,6 +281,102 @@ def dividir_em_chunks(texto, tamanho=50, overlap=10):
         }
         chunks.append(obj)
     return chunks
+
+
+def salvar_documento(nome):
+    conexao = criar_conexao()
+    try:
+        with conexao.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO documentos (nome)
+                VALUES (%s)
+                RETURNING id
+                """,
+                (nome,)
+            )
+            documento_id = cursor.fetchone()[0]
+            conexao.commit()
+            return documento_id
+    finally:
+        conexao.close()
+
+
+def salvar_chunk(documento_id, chunk_id, texto, embedding):
+    conexao = criar_conexao()
+    try:
+        with conexao.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO chunks (
+                    documento_id,
+                    chunk_id,
+                    texto,
+                    embedding
+                )
+                VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    documento_id,
+                    chunk_id,
+                    texto,
+                    embedding
+                )
+            )
+            conexao.commit()
+    finally:
+        conexao.close()
+
+
+def processar_documento(nome, chunks):
+    documento_id = salvar_documento(nome)
+    textos = [
+        chunk["texto"]
+        for chunk in chunks
+    ]
+    embeddings = gerar_embeddings(textos)
+
+    for chunk, embedding in zip(chunks, embeddings):
+        salvar_chunk(
+            documento_id=documento_id,
+            chunk_id=chunk["chunk_id"],
+            texto=chunk["texto"],
+            embedding=embedding
+        )
+    return documento_id
+
+
+def gerar_embeddings(textos):
+    embeddings = modelo_embedding.encode(textos)
+    return embeddings.tolist()
+
+
+def buscar_chunks_semelhantes(pergunta, limite=5):
+    embedding = modelo_embedding.encode(pergunta).tolist()
+    conexao = criar_conexao()
+    try:
+        with conexao.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    documento_id,
+                    chunk_id,
+                    texto,
+                    embedding <=> %s::vector AS distancia
+                FROM chunks
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s
+                """,
+                (
+                    embedding,
+                    embedding,
+                    limite
+                )
+            )
+            return cursor.fetchall()
+    finally:
+        conexao.close()
 
 
 
