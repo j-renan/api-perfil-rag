@@ -1,38 +1,48 @@
-from database import criar_conexao
-from domain.models import Chunk
-# from infrastructure.repositories.postgres_chunk_repository import PostgresChunkRepository
 
+from infrastructure.database.postgres_connection_factory import (
+    PostgresConnectionFactory
+)
 from infrastructure.repositories.postgres_chunk_repository import (
     PostgresChunkRepository
 )
+from infrastructure.embeddings.sentence_transformer_service import (
+    SentenceTransformerEmbeddingService
+)
 
+MODEL_NAME = (
+    "sentence-transformers/"
+    "paraphrase-multilingual-MiniLM-L12-v2"
+)
 
-conexao = criar_conexao()
+connection_factory = PostgresConnectionFactory()
 
-if conexao is None:
-    raise RuntimeError("Não foi possível conectar ao banco de dados.")
+repository = PostgresChunkRepository(
+    connection_factory=connection_factory
+)
 
+embedding_service = SentenceTransformerEmbeddingService(
+    model_name=MODEL_NAME
+)
 
-repository = PostgresChunkRepository(conexao)
+pergunta = "Teste do ChunkRepository"
 
-embedding_teste = [0.1] * 384
+embedding = embedding_service.gerar_embedding(pergunta)
 
-chunks = repository.buscar_semelhantes(
-    embedding=embedding_teste,
+resultados = repository.buscar_semelhantes(
+    embedding=embedding,
     limite=5
 )
 
-for chunk in chunks:
-    print(
-        f"id={chunk.id}, "
-        f"documento_id={chunk.documento_id}, "
-        f"chunk_id={chunk.chunk_id}, "
-        f"texto={chunk.texto}, "
-        f"tipo_embedding={type(chunk.embedding)}, "
-        f"dimensao={len(chunk.embedding) if chunk.embedding else 0}"
-    )
+print(f"Pergunta: {pergunta}")
+print(f"Quantidade de resultados: {len(resultados)}")
 
-conexao.close()
+for resultado in resultados:
+    print("-" * 50)
+    print(f"ID: {resultado.id}")
+    print(f"Documento: {resultado.documento_id}")
+    print(f"Chunk: {resultado.chunk_id}")
+    print(f"Texto: {resultado.texto}")
+
 
 # chunk = Chunk(
 #     documento_id=1,

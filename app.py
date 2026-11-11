@@ -1,21 +1,53 @@
 import os
 
 from flask import Flask, request
-from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity
-from flask_jwt_extended import jwt_required
+from flask_jwt_extended import (
+    JWTManager,
+    create_access_token,
+    get_jwt_identity,
+    jwt_required,
+)
 from psycopg2.extras import RealDictCursor
 from werkzeug.security import generate_password_hash, check_password_hash
-from database import testar_conexao, criar_conexao
-from sentence_transformers import SentenceTransformer
+from domain.models import Documento
 
+from application.use_cases.processar_documento import (
+    ProcessarDocumento,
+)
+from database import criar_conexao, testar_conexao
+from application.use_cases.buscar_chunks_semelhantes import (
+    BuscarChunksSemelhantes,
+)
+from infrastructure.database.postgres_connection_factory import (
+    PostgresConnectionFactory,
+)
+from infrastructure.embeddings.sentence_transformer_service import (
+    SentenceTransformerEmbeddingService,
+)
+from infrastructure.database.postgres_unit_of_work import (
+    PostgresUnitOfWork,
+)
 
 app = Flask(__name__)
 app.config["JWT_SECRET_KEY"] = "chave-super-secreta"
 jwt = JWTManager(app)
 
-modelo_embedding = SentenceTransformer(
-    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+MODEL_NAME = (
+    "sentence-transformers/"
+    "paraphrase-multilingual-MiniLM-L12-v2"
 )
+
+connection_factory = PostgresConnectionFactory()
+
+embedding_service = SentenceTransformerEmbeddingService(
+    model_name=MODEL_NAME
+)
+
+
+def criar_unit_of_work() -> PostgresUnitOfWork:
+    return PostgresUnitOfWork(
+        connection_factory=connection_factory
+    )
 
 
 @app.get("/")
@@ -136,7 +168,6 @@ def perfil():
     usuario = cursor.fetchone()
     cursor.close()
     conexao.close()
-    print("usuariooooooooooooooooooooooo", usuario)
     return {
         "id": id_usuario,
         "nome": usuario.get("nome"),
@@ -185,42 +216,98 @@ def buscar_documentos_completos():
     return documentos
 
 
+
 @app.post("/processar-documento")
 @jwt_required()
 def processar_documento_rota():
+
     nome = "flask.txt"
+
     caminho = os.path.join(
         DIRETORIO_DOCUMENTOS,
-        nome
+        nome,
     )
 
-    texto = ler_documento(caminho)
-    chunks = dividir_em_chunks(texto)
-    documento_id = processar_documento(
-        nome,
-        chunks
-    )
-    return {
-        "mensagem": "Documento processado com sucesso!",
-        "documento_id": documento_id,
-        "quantidade_chunks": len(chunks)
-    }
+    try:
+        # 1. Ler o conteúdo do arquivo
+        texto = ler_documento(caminho)
+
+        # 2. Dividir o conteúdo em chunks
+        chunks = dividir_em_chunks(texto)
+
+        # 3. Criar o objeto de domínio Documento
+        documento = Documento(
+            nome=nome,
+            conteudo=texto,
+        )
+
+        # 4. Criar o caso de uso
+        processar_documento_use_case = ProcessarDocumento(
+            unit_of_work=criar_unit_of_work(),
+            embedding_service=embedding_service,
+        )
+
+        # 5. Executar o processamento
+        documento_id = processar_documento_use_case.executar(
+            documento=documento,
+            chunks=chunks,
+        )
+
+        return {
+            "mensagem": "Documento processado com sucesso!",
+            "documento_id": documento_id,
+            "quantidade_chunks": len(chunks),
+        }, 201
+
+    except FileNotFoundError:
+        return {
+            "erro": f"Arquivo '{nome}' não encontrado."
+        }, 404
+
+    except ValueError as erro:
+        return {
+            "erro": str(erro)
+        }, 400
+
+
 
 
 @app.get("/buscar")
 @jwt_required()
 def buscar():
-    pergunta = request.args.get("pergunta")
-    if not pergunta:
-        return {
-            "erro": "Informe uma pergunta."
-        }, 400
 
-    resultados = buscar_chunks_semelhantes(pergunta)
-    return {
-        "pergunta": pergunta,
-        "resultados": resultados
-    }
+    pergunta = request.args.get("pergunta")
+
+    if not pergunta:
+        return {"erro": "Informe uma pergunta."}, 400
+
+    try:
+        unit_of_work = criar_unit_of_work()
+
+        buscar_chunks_use_case = BuscarChunksSemelhantes(
+            unit_of_work=unit_of_work,
+            embedding_service=embedding_service,
+        )
+
+        resultados = buscar_chunks_use_case.executar(
+            pergunta=pergunta
+        )
+
+        return {
+            "pergunta": pergunta,
+            "resultados": [
+                {
+                    "id": resultado.id,
+                    "documento_id": resultado.documento_id,
+                    "chunk_id": resultado.chunk_id,
+                    "texto": resultado.texto,
+                }
+                for resultado in resultados
+            ],
+        }
+
+    except ValueError as erro:
+        return {"erro": str(erro)}, 400
 
 
 def ler_documento(caminho):
@@ -258,7 +345,13 @@ def carregar_documentos(caminho):
     return resultado
 
 
-def dividir_em_chunks(texto, tamanho=50, overlap=10):
+
+def dividir_em_chunks(
+    texto: str,
+    tamanho: int = 500,
+    overlap: int = 100,
+) -> list[dict[str, int | str]]:
+
     if tamanho <= 0:
         raise ValueError("O tamanho deve ser maior que zero.")
 
@@ -270,17 +363,89 @@ def dividir_em_chunks(texto, tamanho=50, overlap=10):
             "O overlap deve ser menor que o tamanho do chunk."
         )
 
-    passo = tamanho - overlap
+    texto = texto.strip()
+
+    if not texto:
+        raise ValueError("O texto não pode estar vazio.")
 
     chunks = []
-    for idx, chk in enumerate(range(0, len(texto), passo)):
-        chunk = texto[chk:chk + tamanho]
-        obj = {
-            "chunk_id": idx + 1,
-            "texto": chunk
-        }
-        chunks.append(obj)
+    inicio = 0
+
+    while inicio < len(texto):
+
+        limite = min(inicio + tamanho, len(texto))
+        fim = limite
+
+        if limite < len(texto):
+
+            # Procura primeiro limites de parágrafos,
+            # depois frases e, por último, palavras.
+            janela_inicio = inicio + int(tamanho * 0.7)
+
+            separadores = [
+                "\n\n",
+                "\n",
+                ". ",
+                "! ",
+                "? ",
+                " ",
+            ]
+
+            for separador in separadores:
+                posicao = texto.rfind(
+                    separador,
+                    janela_inicio,
+                    limite,
+                )
+
+                if posicao != -1:
+                    fim = posicao + len(separador)
+                    break
+
+            else:
+                # Caso não encontre um separador,
+                # utiliza o limite máximo de caracteres.
+                posicao = texto.rfind(" ", inicio, limite)
+
+                if posicao > inicio:
+                    fim = posicao + 1
+
+        conteudo = texto[inicio:fim].strip()
+
+        if conteudo:
+            chunks.append({
+                "chunk_id": len(chunks) + 1,
+                "texto": conteudo,
+            })
+
+        if fim >= len(texto):
+            break
+
+        # Calcula o início do próximo chunk,
+        # preservando parte do conteúdo anterior.
+        proximo_inicio = max(inicio + 1, fim - overlap)
+
+        # Evita começar o próximo chunk no meio de uma palavra.
+        while (
+            proximo_inicio < fim
+            and not texto[proximo_inicio].isspace()
+        ):
+            proximo_inicio += 1
+
+        # Ignora espaços antes da próxima palavra.
+        while (
+            proximo_inicio < fim
+            and texto[proximo_inicio].isspace()
+        ):
+            proximo_inicio += 1
+
+        if proximo_inicio <= inicio:
+            proximo_inicio = fim
+
+        inicio = proximo_inicio
+
     return chunks
+
 
 
 def salvar_documento(nome):
@@ -346,41 +511,9 @@ def processar_documento(nome, chunks):
     return documento_id
 
 
-def gerar_embeddings(textos):
-    embeddings = modelo_embedding.encode(textos)
-    return embeddings.tolist()
-
-
-def buscar_chunks_semelhantes(pergunta, limite=5):
-    embedding = modelo_embedding.encode(pergunta).tolist()
-    conexao = criar_conexao()
-    try:
-        with conexao.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute(
-                """
-                SELECT
-                    id,
-                    documento_id,
-                    chunk_id,
-                    texto,
-                    embedding <=> %s::vector AS distancia
-                FROM chunks
-                ORDER BY embedding <=> %s::vector
-                LIMIT %s
-                """,
-                (
-                    embedding,
-                    embedding,
-                    limite
-                )
-            )
-            return cursor.fetchall()
-    finally:
-        conexao.close()
-
+def gerar_embeddings(textos: list[str]) -> list[list[float]]:
+    return embedding_service.gerar_embeddings(textos)
 
 
 if __name__ == "__main__":
     app.run(debug=True)
-
-

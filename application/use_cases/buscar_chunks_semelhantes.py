@@ -1,19 +1,25 @@
-from ports.chunk_repository import ChunkRepository
-from ports.embedding_service import EmbeddingService
+
 from domain.models import Chunk
+from ports.embedding_service import EmbeddingService
+from ports.unit_of_work import UnitOfWork
 
 
 class BuscarChunksSemelhantes:
 
     def __init__(
         self,
-        repository: ChunkRepository,
-        embedding_service: EmbeddingService
-    ):
-        self.repository = repository
+        unit_of_work: UnitOfWork,
+        embedding_service: EmbeddingService,
+    ) -> None:
+        self.unit_of_work = unit_of_work
         self.embedding_service = embedding_service
 
-    def executar(self, pergunta: str, limite: int = 5) -> list[Chunk]:
+    def executar(
+        self,
+        pergunta: str,
+        limite: int = 5,
+    ) -> list[Chunk]:
+
         if not pergunta.strip():
             raise ValueError("A pergunta não pode estar vazia.")
 
@@ -22,7 +28,10 @@ class BuscarChunksSemelhantes:
 
         embedding = self.embedding_service.gerar_embedding(pergunta)
 
-        return self.repository.buscar_semelhantes(
-            embedding=embedding,
-            limite=limite
-        )
+        with self.unit_of_work as uow:
+            resultados = uow.chunk_repository.buscar_semelhantes(
+                embedding=embedding,
+                limite=limite,
+            )
+
+            return resultados

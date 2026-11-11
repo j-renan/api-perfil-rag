@@ -14,12 +14,22 @@ embedding_service = SentenceTransformerEmbeddingService(
 )
 
 
-texto = "Quais tecnologias eu conheço?"
+textos = [
+    "Python é uma linguagem de programação.",
+    "Flask é um microframework web.",
+    "Eu trabalho com desenvolvimento Full-Stack."
+]
 
 
-embedding = embedding_service.gerar_embedding(texto)
+embeddings = embedding_service.gerar_embeddings(
+    textos
+)
 
 
-print(f"Tipo: {type(embedding)}")
-print(f"Dimensão: {len(embedding)}")
-print(f"Primeiros valores: {embedding[:5]}")
+print(f"Quantidade de embeddings: {len(embeddings)}")
+print(f"Dimensão do primeiro embedding: {len(embeddings[0])}")
+print(f"Dimensão do segundo embedding: {len(embeddings[1])}")
+print(f"Dimensão do terceiro embedding: {len(embeddings[2])}")
+
+print("\nPrimeiros valores do primeiro embedding:")
+print(embeddings[0][:5])
