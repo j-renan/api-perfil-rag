@@ -50,9 +50,9 @@ class PostgresChunkRepository(ChunkRepository):
         return chunk
 
     def buscar_semelhantes(
-        self,
-        embedding: list[float],
-        limite: int = 5,
+            self,
+            embedding: list[float],
+            limite: int = 5,
     ) -> list[Chunk]:
 
         if not embedding:
@@ -62,21 +62,30 @@ class PostgresChunkRepository(ChunkRepository):
             raise ValueError("O limite deve ser maior que zero.")
 
         sql = """
-            SELECT
-                id,
-                documento_id,
-                chunk_id,
-                texto,
-                embedding
-            FROM chunks
-            ORDER BY embedding <=> %s
-            LIMIT %s
-        """
+              SELECT id, \
+                     documento_id, \
+                     chunk_id, \
+                     texto, \
+                     embedding, \
+                     distancia
+              FROM (SELECT id,
+                           documento_id,
+                           chunk_id,
+                           texto,
+                           embedding,
+                           embedding <=> %s AS distancia \
+                    FROM chunks) AS resultados
+              ORDER BY distancia
+                  LIMIT %s \
+              """
 
         embedding_formatado = self._formatar_embedding(embedding)
 
         with self.conexao.cursor() as cursor:
-            cursor.execute(sql, (embedding_formatado, limite))
+            cursor.execute(
+                sql,
+                (embedding_formatado, limite)
+            )
             resultados = cursor.fetchall()
 
         return [
@@ -86,6 +95,7 @@ class PostgresChunkRepository(ChunkRepository):
                 chunk_id=registro[2],
                 texto=registro[3],
                 embedding=self._converter_embedding(registro[4]),
+                distancia=float(registro[5]),
             )
             for registro in resultados
         ]

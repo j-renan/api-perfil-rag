@@ -9,6 +9,7 @@ from flask_jwt_extended import (
 )
 from psycopg2.extras import RealDictCursor
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 from domain.models import Documento
 
 from application.use_cases.processar_documento import (
@@ -217,37 +218,52 @@ def buscar_documentos_completos():
 
 
 
+
 @app.post("/processar-documento")
 @jwt_required()
 def processar_documento_rota():
+    dados = request.get_json(silent=True) or {}
+    nome_arquivo = dados.get("nome_arquivo")
 
-    nome = "flask.txt"
+    if not isinstance(nome_arquivo, str) or not nome_arquivo.strip():
+        return {
+            "erro": "Informe o nome do arquivo."
+        }, 400
 
-    caminho = os.path.join(
-        DIRETORIO_DOCUMENTOS,
-        nome,
+    nome_arquivo = nome_arquivo.strip()
+    nome_seguro = secure_filename(nome_arquivo)
+
+    # Rejeita nomes que precisem ser modificados para se tornarem seguros.
+    if not nome_seguro or nome_seguro != nome_arquivo:
+        return {
+            "erro": "Nome de arquivo inválido."
+        }, 400
+
+    diretorio = os.path.abspath(DIRETORIO_DOCUMENTOS)
+
+    caminho = os.path.abspath(
+        os.path.join(diretorio, nome_seguro)
     )
 
+    # Garante que o arquivo esteja dentro do diretório autorizado.
+    if os.path.commonpath([diretorio, caminho]) != diretorio:
+        return {
+            "erro": "Acesso ao caminho não permitido."
+        }, 400
+
     try:
-        # 1. Ler o conteúdo do arquivo
         texto = ler_documento(caminho)
-
-        # 2. Dividir o conteúdo em chunks
         chunks = dividir_em_chunks(texto)
-
-        # 3. Criar o objeto de domínio Documento
         documento = Documento(
-            nome=nome,
+            nome=nome_seguro,
             conteudo=texto,
         )
 
-        # 4. Criar o caso de uso
         processar_documento_use_case = ProcessarDocumento(
             unit_of_work=criar_unit_of_work(),
             embedding_service=embedding_service,
         )
 
-        # 5. Executar o processamento
         documento_id = processar_documento_use_case.executar(
             documento=documento,
             chunks=chunks,
@@ -261,7 +277,7 @@ def processar_documento_rota():
 
     except FileNotFoundError:
         return {
-            "erro": f"Arquivo '{nome}' não encontrado."
+            "erro": f"Arquivo '{nome_seguro}' não encontrado."
         }, 404
 
     except ValueError as erro:
@@ -272,25 +288,31 @@ def processar_documento_rota():
 
 
 
+
+
 @app.get("/buscar")
 @jwt_required()
 def buscar():
-
     pergunta = request.args.get("pergunta")
-
     if not pergunta:
         return {"erro": "Informe uma pergunta."}, 400
 
-    try:
-        unit_of_work = criar_unit_of_work()
+    similaridade_minima_texto = request.args.get(
+        "similaridade_minima",
+        default="0.40",
+    )
 
+    try:
+        similaridade_minima = float(similaridade_minima_texto)
+        unit_of_work = criar_unit_of_work()
         buscar_chunks_use_case = BuscarChunksSemelhantes(
             unit_of_work=unit_of_work,
             embedding_service=embedding_service,
         )
 
         resultados = buscar_chunks_use_case.executar(
-            pergunta=pergunta
+            pergunta=pergunta,
+            similaridade_minima=similaridade_minima,
         )
 
         return {
@@ -301,6 +323,12 @@ def buscar():
                     "documento_id": resultado.documento_id,
                     "chunk_id": resultado.chunk_id,
                     "texto": resultado.texto,
+                    "distancia": resultado.distancia,
+                    "similaridade": (
+                        round(1 - resultado.distancia, 6)
+                        if resultado.distancia is not None
+                        else None
+                    ),
                 }
                 for resultado in resultados
             ],
@@ -308,6 +336,7 @@ def buscar():
 
     except ValueError as erro:
         return {"erro": str(erro)}, 400
+
 
 
 def ler_documento(caminho):

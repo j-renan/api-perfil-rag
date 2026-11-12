@@ -1,8 +1,25 @@
-from app import app
+# from app import app
+#
+# print("Aplicação Flask importada com sucesso!")
+#
+# print("Rotas registradas:")
+#
+# for regra in app.url_map.iter_rules():
+#     print(regra)
 
-print("Aplicação Flask importada com sucesso!")
+import os
 
-print("Rotas registradas:")
+from app import DIRETORIO_DOCUMENTOS
 
-for regra in app.url_map.iter_rules():
-    print(regra)
+nome = "teste-rag-chunks.txt"
+
+caminho = os.path.join(
+    DIRETORIO_DOCUMENTOS,
+    nome,
+)
+
+if os.path.isfile(caminho):
+    print("Arquivo de teste encontrado!")
+    print("Tamanho:", os.path.getsize(caminho), "bytes")
+else:
+    print("Arquivo de teste não encontrado!")

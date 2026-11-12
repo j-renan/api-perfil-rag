@@ -8,3 +8,4 @@ class Chunk:
     texto: str
     embedding: list[float] | None = None
     id: int | None = None
+    distancia: float | None = None

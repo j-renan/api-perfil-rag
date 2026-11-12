@@ -15,9 +15,10 @@ class BuscarChunksSemelhantes:
         self.embedding_service = embedding_service
 
     def executar(
-        self,
-        pergunta: str,
-        limite: int = 5,
+            self,
+            pergunta: str,
+            limite: int = 5,
+            similaridade_minima: float = 0.40,
     ) -> list[Chunk]:
 
         if not pergunta.strip():
@@ -25,6 +26,11 @@ class BuscarChunksSemelhantes:
 
         if limite <= 0:
             raise ValueError("O limite deve ser maior que zero.")
+
+        if not -1 <= similaridade_minima <= 1:
+            raise ValueError(
+                "A similaridade mínima deve estar entre -1 e 1."
+            )
 
         embedding = self.embedding_service.gerar_embedding(pergunta)
 
@@ -34,4 +40,14 @@ class BuscarChunksSemelhantes:
                 limite=limite,
             )
 
-            return resultados
+            resultados_filtrados = [
+                chunk
+                for chunk in resultados
+                if (
+                        chunk.distancia is not None
+                        and (1 - chunk.distancia) >= similaridade_minima
+                )
+            ]
+
+            return resultados_filtrados
+
