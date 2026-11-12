@@ -1,25 +1,38 @@
-# from app import app
+from app import app
+
+print("Aplicação Flask importada com sucesso!")
+
+print("Rotas registradas:")
+
+for regra in app.url_map.iter_rules():
+    print(regra)
+
+# import os
 #
-# print("Aplicação Flask importada com sucesso!")
+# from app import DIRETORIO_DOCUMENTOS
 #
-# print("Rotas registradas:")
+# nome = "teste-rag-chunks.txt"
 #
-# for regra in app.url_map.iter_rules():
-#     print(regra)
+# caminho = os.path.join(
+#     DIRETORIO_DOCUMENTOS,
+#     nome,
+# )
+#
+# if os.path.isfile(caminho):
+#     print("Arquivo de teste encontrado!")
+#     print("Tamanho:", os.path.getsize(caminho), "bytes")
+# else:
+#     print("Arquivo de teste não encontrado!")
 
-import os
+# from groq import Groq
+#
+# print("SDK Groq importado com sucesso!")
 
-from app import DIRETORIO_DOCUMENTOS
+# from ports.llm_service import LLMService
+#
+# print("Interface LLMService importada com sucesso!")
 
-nome = "teste-rag-chunks.txt"
 
-caminho = os.path.join(
-    DIRETORIO_DOCUMENTOS,
-    nome,
-)
-
-if os.path.isfile(caminho):
-    print("Arquivo de teste encontrado!")
-    print("Tamanho:", os.path.getsize(caminho), "bytes")
-else:
-    print("Arquivo de teste não encontrado!")
+# from application.use_cases.responder_pergunta import ResponderPergunta
+#
+# print("Caso de uso ResponderPergunta importado com sucesso!")

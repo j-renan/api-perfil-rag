@@ -11,6 +11,7 @@ from psycopg2.extras import RealDictCursor
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from domain.models import Documento
+from application.services.montador_contexto import MontadorContexto
 
 from application.use_cases.processar_documento import (
     ProcessarDocumento,
@@ -29,6 +30,14 @@ from infrastructure.database.postgres_unit_of_work import (
     PostgresUnitOfWork,
 )
 
+from application.use_cases.responder_pergunta import (
+    ResponderPergunta,
+)
+
+from infrastructure.llm.groq_llm_service import (
+    GroqLLMService,
+)
+
 app = Flask(__name__)
 app.config["JWT_SECRET_KEY"] = "chave-super-secreta"
 jwt = JWTManager(app)
@@ -44,6 +53,9 @@ embedding_service = SentenceTransformerEmbeddingService(
     model_name=MODEL_NAME
 )
 
+montador_contexto = MontadorContexto()
+
+groq_llm_service = GroqLLMService()
 
 def criar_unit_of_work() -> PostgresUnitOfWork:
     return PostgresUnitOfWork(
@@ -290,10 +302,12 @@ def processar_documento_rota():
 
 
 
+
 @app.get("/buscar")
 @jwt_required()
 def buscar():
     pergunta = request.args.get("pergunta")
+
     if not pergunta:
         return {"erro": "Informe uma pergunta."}, 400
 
@@ -304,10 +318,13 @@ def buscar():
 
     try:
         similaridade_minima = float(similaridade_minima_texto)
+
         unit_of_work = criar_unit_of_work()
+
         buscar_chunks_use_case = BuscarChunksSemelhantes(
             unit_of_work=unit_of_work,
             embedding_service=embedding_service,
+            montador_contexto=montador_contexto,
         )
 
         resultados = buscar_chunks_use_case.executar(
@@ -315,8 +332,11 @@ def buscar():
             similaridade_minima=similaridade_minima,
         )
 
+        contexto = montador_contexto.montar(resultados)
+
         return {
             "pergunta": pergunta,
+            "contexto": contexto,
             "resultados": [
                 {
                     "id": resultado.id,
@@ -333,6 +353,54 @@ def buscar():
                 for resultado in resultados
             ],
         }
+
+    except ValueError as erro:
+        return {"erro": str(erro)}, 400
+
+
+
+@app.post("/perguntar")
+@jwt_required()
+def perguntar():
+    # Recupera os dados enviados no corpo da requisição.
+    dados = request.get_json(silent=True)
+
+    # Verifica se o corpo da requisição é um objeto JSON.
+    if not isinstance(dados, dict):
+        return {"erro": "Envie um objeto JSON válido."}, 400
+
+    # Recupera a pergunta enviada pelo usuário.
+    pergunta = dados.get("pergunta")
+
+    # Valida a pergunta.
+    if not isinstance(pergunta, str) or not pergunta.strip():
+        return {"erro": "Informe uma pergunta válida."}, 400
+
+    try:
+        # Cria o caso de uso responsável pela recuperação dos chunks.
+        buscar_chunks_use_case = BuscarChunksSemelhantes(
+            unit_of_work=criar_unit_of_work(),
+            embedding_service=embedding_service,
+            montador_contexto=montador_contexto,
+        )
+
+        # Cria o caso de uso responsável por gerar a resposta.
+        responder_pergunta_use_case = ResponderPergunta(
+            buscar_chunks=buscar_chunks_use_case,
+            llm_service=groq_llm_service,
+        )
+
+        # Executa o fluxo completo do RAG.
+        resultado = responder_pergunta_use_case.executar(
+            pergunta=pergunta,
+        )
+
+        # Retorna os dados da interação.
+        return {
+            "pergunta": resultado.pergunta,
+            "contexto": resultado.contexto,
+            "resposta": resultado.resposta,
+        }, 200
 
     except ValueError as erro:
         return {"erro": str(erro)}, 400
